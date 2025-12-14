@@ -2,8 +2,24 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Report } from '@/lib/accessibility/types';
 
-export function generatePdfReport(report: Report) {
+export async function generatePdfReport(report: Report) {
     const doc = new jsPDF();
+
+    // Load Polish-compatible font (Roboto)
+    try {
+        const fontUrl = 'https://fonts.gstatic.com/s/roboto/v30/KFOmCnqEu92Fr1Mu4mxK.woff2';
+        const fontBytes = await fetch(fontUrl).then(res => res.arrayBuffer());
+
+        // Convert to base64
+        const base64Font = Buffer.from(fontBytes).toString('base64');
+
+        // Add to VFS and Register
+        doc.addFileToVFS('Roboto-Regular.ttf', base64Font);
+        doc.addFont('Roboto-Regular.ttf', 'Roboto', 'normal');
+        doc.setFont('Roboto');
+    } catch (e) {
+        console.warn('Could not load custom font, falling back to default', e);
+    }
 
     // Header
     doc.setFontSize(20);
@@ -32,8 +48,8 @@ export function generatePdfReport(report: Report) {
         startY: 55,
         head: [['Status', 'Kryterium', 'Problem', 'Wplyw']],
         body: tableData,
-        styles: { fontSize: 10, cellPadding: 3 },
-        headStyles: { fillColor: [59, 130, 246] },
+        styles: { fontSize: 10, cellPadding: 3, font: 'Roboto' }, // Apply font to table
+        headStyles: { fillColor: [59, 130, 246], font: 'Roboto' },
         alternateRowStyles: { fillColor: [248, 250, 252] },
         didParseCell: (data) => {
             if (data.section === 'body' && data.column.index === 0) {
