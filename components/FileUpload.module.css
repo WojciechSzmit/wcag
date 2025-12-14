@@ -1,10 +1,10 @@
 .dropZone {
-    border: 2px dashed var(--border);
-    border-radius: var(--radius-xl);
+    border: 2px dashed #bbbbbb;
+    border-radius: 0;
     padding: 4rem 2rem;
     text-align: center;
     transition: all 0.2s ease;
-    background: var(--surface);
+    background: #fdfdfd;
     cursor: pointer;
     position: relative;
     overflow: hidden;
@@ -12,45 +12,30 @@
 
 .dropZone:hover {
     border-color: var(--primary);
-    background: var(--surface-hover);
+    background: #f0f7ff;
 }
 
 .active {
     border-color: var(--primary);
-    background: rgba(59, 130, 246, 0.1);
-    animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-    0% {
-        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
-    }
-
-    70% {
-        box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
-    }
-
-    100% {
-        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
-    }
+    background: #eef2f6;
 }
 
 .icon {
-    width: 64px;
-    height: 64px;
+    width: 48px;
+    height: 48px;
     margin-bottom: 1.5rem;
-    color: var(--primary);
+    color: #555;
 }
 
 .title {
     font-size: 1.25rem;
-    font-weight: 600;
+    font-weight: 700;
     margin-bottom: 0.5rem;
+    color: #333;
 }
 
 .subtitle {
-    color: #94a3b8;
-    /* Slate 400 */
+    color: #666;
     font-size: 0.875rem;
 }
 

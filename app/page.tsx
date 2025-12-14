@@ -4,6 +4,8 @@ import React, { useState } from 'react';
 import FileUpload from '@/components/FileUpload';
 import ReportView from '@/components/ReportView';
 import { checkDocx } from '@/lib/accessibility/docxChecker';
+import { checkPdf } from '@/lib/accessibility/pdfChecker'; // Imported directly, we will handle dynamic import if needed or rely on nextjs optimization
+// Note: Keeping dynamic import for pdf inside function is safer for SSR
 import { Report } from '@/lib/accessibility/types';
 
 export default function Home() {
@@ -17,7 +19,7 @@ export default function Home() {
     try {
       let result: Report;
       if (file.type === 'application/pdf') {
-        // Dynamically import scanner to avoid SSR build issues with pdfjs-dist
+        // Dynamic import to avoid SSR issues with pdfjs-dist
         const { checkPdf } = await import('@/lib/accessibility/pdfChecker');
         result = await checkPdf(file);
       } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
@@ -40,33 +42,60 @@ export default function Home() {
   };
 
   return (
-    <main style={{ minHeight: '100vh', padding: '2rem' }}>
-      <div className="container">
-        <header style={{ textAlign: 'center', marginBottom: '4rem', marginTop: '2rem' }}>
-          <h1 style={{ fontSize: '2.5rem', marginBottom: '0.5rem', background: 'linear-gradient(to right, #60a5fa, #3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            Sprawdzanie Dostępności WCAG
+    <main style={{ minHeight: '100vh', padding: '2rem 1rem', background: 'white' }}>
+      <div className="container" style={{ maxWidth: '960px', margin: '0 auto' }}>
+        {/* Official Header Strip */}
+        <div style={{ borderBottom: '1px solid #e0e0e0', paddingBottom: '1rem', marginBottom: '2rem' }}>
+
+
+          <h1 style={{ fontSize: '2.2rem', color: '#0b0c10', margin: '1rem 0 0.5rem 0' }}>
+            Weryfikacja Dostępności Cyfrowej
           </h1>
-          <p style={{ color: '#94a3b8' }}>
-            Wgraj plik PDF lub DOCX, aby sprawdzić zgodność z WCAG 2.1.
+          <p style={{ color: '#555', fontSize: '1.1rem' }}>
+            Narzędzie pomocnicze do weryfikacji dokumentów pod kątem WCAG 2.1
           </p>
-        </header>
+        </div>
 
         {error && (
-          <div style={{ padding: '1rem', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: '0.5rem', marginBottom: '2rem', textAlign: 'center' }}>
-            {error}
+          <div style={{ padding: '1rem', background: '#ffebee', color: '#c62828', borderLeft: '4px solid #d32f2f', marginBottom: '2rem' }}>
+            <strong>Błąd:</strong> {error}
           </div>
         )}
 
         {!report ? (
-          <div className="fade-in" style={{ maxWidth: '600px', margin: '0 auto' }}>
+          <div className="fade-in" style={{ maxWidth: '100%', margin: '0 0' }}>
+
+            <div style={{ background: '#f0f7ff', border: '1px solid #d0e4f7', padding: '1.5rem', marginBottom: '2rem' }}>
+              <p style={{ margin: 0, color: '#004d9d', fontWeight: '600' }}>
+                System obsługuje pliki PDF oraz DOCX. Maksymalny rozmiar pliku: 10MB.
+              </p>
+            </div>
+
             <FileUpload onFileSelect={handleFileSelect} isProcessing={isProcessing} />
-            <div style={{ marginTop: '2rem', fontSize: '0.875rem', color: '#64748b', textAlign: 'center' }}>
-              <p>Sprawdzane elementy:</p>
-              <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '0.5rem' }}>
-                <span>✓ Metadane</span>
-                <span>✓ Nagłówki</span>
-                <span>✓ Tekst Alternatywny</span>
-                <span>✓ Język</span>
+
+            <div style={{ marginTop: '3rem', padding: '0', background: 'transparent' }}>
+              <h3 style={{ fontSize: '1.25rem', borderBottom: '2px solid #004d9d', paddingBottom: '0.5rem', display: 'inline-block', marginBottom: '1.5rem' }}>
+                Zakres weryfikacji
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+                <div>
+                  <h4 style={{ fontSize: '1rem', color: '#333' }}>Dokumenty Tekstowe (DOCX)</h4>
+                  <ul style={{ listStyle: 'disc', paddingLeft: '1.5rem', color: '#555', lineHeight: '1.8' }}>
+                    <li>Tytuł dokumentu</li>
+                    <li>Język treści</li>
+                    <li>Struktura nagłówków</li>
+                    <li>Teksty alternatywne obrazów</li>
+                  </ul>
+                </div>
+                <div>
+                  <h4 style={{ fontSize: '1rem', color: '#333' }}>Dokumenty PDF</h4>
+                  <ul style={{ listStyle: 'disc', paddingLeft: '1.5rem', color: '#555', lineHeight: '1.8' }}>
+                    <li>Metadane (Tytuł, Język)</li>
+                    <li>Tagi strukturalne (Tagged PDF)</li>
+                    <li>Teksty alternatywne (Figury)</li>
+                    <li>Obecność warstwy tekstowej (OCR)</li>
+                  </ul>
+                </div>
               </div>
             </div>
           </div>
@@ -74,6 +103,12 @@ export default function Home() {
           <ReportView report={report} onReset={reset} />
         )}
       </div>
+
+      <footer style={{ marginTop: '5rem', borderTop: '1px solid #eee', padding: '2rem 0', color: '#777', fontSize: '0.85rem' }}>
+        <div className="container" style={{ maxWidth: '960px' }}>
+          <p>Aplikacja zgodna ze standardami dostępności.</p>
+        </div>
+      </footer>
     </main>
   );
 }
