@@ -53,19 +53,52 @@ export async function checkDocx(file: File): Promise<Report> {
         });
     }
 
-    // 2. Language Check - WCAG 3.1.1 Language of Page
-    // Usually in word/styles.xml or word/settings.xml, typically default language
-    // Simplified check: usually difficult to reliably get main lang from vanilla docx xml without complex parsing
-    // We will add a manual check warning or minimal check if found.
-    // Actually, 'word/styles.xml' usually contains <w:lang ...>
-
+    // 2. Language & Style Analysis
     const stylesFile = zip.file('word/styles.xml');
     let langFound = false;
+    const headingStyleIds = new Set<string>();
+
     if (stylesFile) {
         const xml = await stylesFile.async('text');
+
+        // Check for Language definition
         if (xml.includes('w:lang')) {
             langFound = true;
-            // Heuristic: just checking existence of lang tag definition
+        }
+
+        // Deep Heading Check: Parse styles.xml to find Style IDs that map to Headings
+        try {
+            const stylesResult = await parseStringPromise(xml);
+            const styles = stylesResult?.['w:styles']?.['w:style'] || [];
+
+            // Normalize potential array/single object structure from xml2js if simplified
+            const styleArray = Array.isArray(styles) ? styles : [styles];
+
+            styleArray.forEach((style: any) => {
+                const styleId = style.$?.['w:styleId'];
+                // Check name w:val
+                const nameNode = style['w:name'];
+                const nameVal = (Array.isArray(nameNode) ? nameNode[0] : nameNode)?.$?.['w:val']?.toLowerCase() || '';
+
+                // Check basedOn w:val
+                const basedOnNode = style['w:basedOn'];
+                const basedOn = (Array.isArray(basedOnNode) ? basedOnNode[0] : basedOnNode)?.$?.['w:val']?.toLowerCase() || '';
+
+                // Check if this style represents a heading
+                // 1. Name matches Heading X / Nagłówek X / Tytuł (localized)
+                // 2. BasedOn matches Heading X
+                // 3. StyleID itself looks like Heading X
+
+                const isHeadingName = /heading\s*[0-9]|nag[lł]ówek\s*[0-9]|tytuł/i.test(nameVal);
+                const isHeadingBasedOn = /heading\s*[0-9]|nag[lł]ówek/i.test(basedOn);
+                const isHeadingId = /heading[0-9]/i.test(styleId || '');
+
+                if (styleId && (isHeadingName || isHeadingBasedOn || isHeadingId)) {
+                    headingStyleIds.add(styleId);
+                }
+            });
+        } catch (e) {
+            console.warn('Failed to parse styles.xml for headings', e);
         }
     }
 
@@ -91,7 +124,6 @@ export async function checkDocx(file: File): Promise<Report> {
 
 
     // 3. Headings & Structure - WCAG 1.3.1 Info and Relationships
-    // Check word/document.xml for Use of Heading styles (Heading 1, Heading 2...)
     const documentFile = zip.file('word/document.xml');
     let hasHeadings = false;
     let hasImages = false;
@@ -99,15 +131,28 @@ export async function checkDocx(file: File): Promise<Report> {
 
     if (documentFile) {
         const xml = await documentFile.async('text');
-        const result = await parseStringPromise(xml);
 
-        // Naively convert entire object to string to search for style names
-        // This is a heuristic. A proper parser would traverse the specific nodes.
-        // In DOCX, headings are typically <w:pStyle w:val="Heading1"/>
+        // We check if any of the identified `headingStyleIds` are used in <w:pStyle w:val="ID"/>
+        if (headingStyleIds.size > 0) {
+            for (const id of Array.from(headingStyleIds)) {
+                // Construct regex to find exact style usage: w:val="StyleID"
+                // IDs in XML attributes are case-sensitive usually
+                // Escape special regex chars in ID just in case
+                const escapedId = id.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+                const regex = new RegExp(`w:val=["']${escapedId}["']`, 'i');
+                if (regex.test(xml)) {
+                    hasHeadings = true;
+                    break;
+                }
+            }
+        }
 
-        // We can do a Regex check on the raw XML for performance and simplicity in this heuristic scope
-        if (/w:val="Heading[1-6]"/.test(xml)) {
-            hasHeadings = true;
+        // Fallback: If style parsing failed or return 0, try the raw regexes again
+        if (!hasHeadings) {
+            const fallbackRegex = /w:val=["'](Heading|Nagłówek|Naglowek|Tytuł)\s*[0-9]+["']|w:val=["']Heading[0-9]+["']/i;
+            if (fallbackRegex.test(xml)) {
+                hasHeadings = true;
+            }
         }
 
         // 4. Images & Alt Text - WCAG 1.1.1 Non-text Content
@@ -122,6 +167,7 @@ export async function checkDocx(file: File): Promise<Report> {
             // Check for descr or description (older word versions might use different attrs, but descr is common in wp:docPr)
             const hasDescr = /descr="[^"]+"/.test(tag) && !/descr=""/.test(tag) && !/descr="\s*"/.test(tag);
             const hasTitle = /title="[^"]+"/.test(tag);
+            // Some newer Office version use 'name' as title if no other attr, but let's stick to standard accessibility fields
 
             // If it lacks both, it's likely missing alt text.
             if (!hasDescr && !hasTitle) {
