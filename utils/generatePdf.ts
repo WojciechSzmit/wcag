@@ -7,11 +7,18 @@ export async function generatePdfReport(report: Report) {
 
     // Load Polish-compatible font (Roboto)
     try {
-        const fontUrl = 'https://fonts.gstatic.com/s/roboto/v30/KFOmCnqEu92Fr1Mu4mxK.woff2';
+        // Use a TTF source (WOFF2 causes read errors in jsPDF)
+        const fontUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf';
         const fontBytes = await fetch(fontUrl).then(res => res.arrayBuffer());
 
-        // Convert to base64
-        const base64Font = Buffer.from(fontBytes).toString('base64');
+        // Convert to base64 (Browser safe)
+        let binary = '';
+        const bytes = new Uint8Array(fontBytes);
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        const base64Font = btoa(binary);
 
         // Add to VFS and Register
         doc.addFileToVFS('Roboto-Regular.ttf', base64Font);
