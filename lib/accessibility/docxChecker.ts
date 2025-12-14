@@ -56,49 +56,47 @@ export async function checkDocx(file: File): Promise<Report> {
     // 2. Language & Style Analysis
     const stylesFile = zip.file('word/styles.xml');
     let langFound = false;
-    const headingStyleIds = new Set<string>();
+    // Map of StyleID -> Heading Level (1-6)
+    const headingStyles = new Map<string, number>();
 
     if (stylesFile) {
         const xml = await stylesFile.async('text');
 
-        // Check for Language definition
         if (xml.includes('w:lang')) {
             langFound = true;
         }
 
-        // Deep Heading Check: Parse styles.xml to find Style IDs that map to Headings
         try {
             const stylesResult = await parseStringPromise(xml);
             const styles = stylesResult?.['w:styles']?.['w:style'] || [];
-
-            // Normalize potential array/single object structure from xml2js if simplified
             const styleArray = Array.isArray(styles) ? styles : [styles];
 
             styleArray.forEach((style: any) => {
                 const styleId = style.$?.['w:styleId'];
-                // Check name w:val
-                const nameNode = style['w:name'];
-                const nameVal = (Array.isArray(nameNode) ? nameNode[0] : nameNode)?.$?.['w:val']?.toLowerCase() || '';
+                const nameVal = (style['w:name']?.[0]?.$?.['w:val'] || '').toLowerCase();
+                const basedOn = (style['w:basedOn']?.[0]?.$?.['w:val'] || '').toLowerCase();
 
-                // Check basedOn w:val
-                const basedOnNode = style['w:basedOn'];
-                const basedOn = (Array.isArray(basedOnNode) ? basedOnNode[0] : basedOnNode)?.$?.['w:val']?.toLowerCase() || '';
+                // Regex matches to find level
+                const nameMatch = nameVal.match(/(?:heading|nag[lł]ówek)\s*([1-6])/i);
+                const idMatch = (styleId || '').match(/heading([1-6])/i);
 
-                // Check if this style represents a heading
-                // 1. Name matches Heading X / Nagłówek X / Tytuł (localized)
-                // 2. BasedOn matches Heading X
-                // 3. StyleID itself looks like Heading X
+                let level = 0;
+                if (nameMatch) {
+                    level = parseInt(nameMatch[1], 10);
+                } else if (idMatch) {
+                    level = parseInt(idMatch[1], 10);
+                } else if (nameVal === 'tytuł' || nameVal === 'title') {
+                    // Treat Title/Tytuł sort of like H1 for detection, but usually it's separate. 
+                    // Let's treat it as H1 for hierarchy purposes if it acts as a main header.
+                    level = 1;
+                }
 
-                const isHeadingName = /heading\s*[0-9]|nag[lł]ówek\s*[0-9]|tytuł/i.test(nameVal);
-                const isHeadingBasedOn = /heading\s*[0-9]|nag[lł]ówek/i.test(basedOn);
-                const isHeadingId = /heading[0-9]/i.test(styleId || '');
-
-                if (styleId && (isHeadingName || isHeadingBasedOn || isHeadingId)) {
-                    headingStyleIds.add(styleId);
+                if (styleId && level > 0) {
+                    headingStyles.set(styleId, level);
                 }
             });
         } catch (e) {
-            console.warn('Failed to parse styles.xml for headings', e);
+            console.warn('Failed to parse styles.xml', e);
         }
     }
 
@@ -123,53 +121,55 @@ export async function checkDocx(file: File): Promise<Report> {
     }
 
 
-    // 3. Headings & Structure - WCAG 1.3.1 Info and Relationships
+    // 3. Headings & Structure - WCAG 1.3.1
     const documentFile = zip.file('word/document.xml');
     let hasHeadings = false;
     let hasImages = false;
     let imagesMissingAlt = 0;
+    let hierarchyErrors: string[] = [];
 
     if (documentFile) {
         const xml = await documentFile.async('text');
+        const result = await parseStringPromise(xml);
 
-        // We check if any of the identified `headingStyleIds` are used in <w:pStyle w:val="ID"/>
-        if (headingStyleIds.size > 0) {
-            for (const id of Array.from(headingStyleIds)) {
-                // Construct regex to find exact style usage: w:val="StyleID"
-                // IDs in XML attributes are case-sensitive usually
-                // Escape special regex chars in ID just in case
-                const escapedId = id.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
-                const regex = new RegExp(`w:val=["']${escapedId}["']`, 'i');
-                if (regex.test(xml)) {
-                    hasHeadings = true;
-                    break;
-                }
-            }
-        }
+        // Traverse Paragraphs
+        const body = result?.['w:document']?.['w:body']?.[0];
+        const paragraphs = body?.['w:p'] || [];
 
-        // Fallback: If style parsing failed or return 0, try the raw regexes again
-        if (!hasHeadings) {
-            const fallbackRegex = /w:val=["'](Heading|Nagłówek|Naglowek|Tytuł)\s*[0-9]+["']|w:val=["']Heading[0-9]+["']/i;
-            if (fallbackRegex.test(xml)) {
+        let lastLevel = 0;
+
+        // Ensure array
+        const pArray = Array.isArray(paragraphs) ? paragraphs : [paragraphs];
+
+        pArray.forEach((p: any) => {
+            const pStyle = p['w:pPr']?.[0]?.['w:pStyle']?.[0]?.$?.['w:val'];
+
+            if (pStyle && headingStyles.has(pStyle)) {
                 hasHeadings = true;
+                const currentLevel = headingStyles.get(pStyle) || 0;
+
+                // Check Hierarchy: Cannot skip level (e.g. 1 -> 3)
+                // However, 1 -> 2 is OK. 2 -> 3 is OK. 2 -> 2 is OK. 2 -> 1 is OK.
+                // Rule: current <= last + 1
+
+                // Exception: The very first heading can be anything (usually H1), but strict WCAG often suggests starting with H1.
+                // We'll be lenient: just check skips.
+                // If lastLevel is 0 (start), we accept any starting level (though H1 is best practice).
+
+                if (lastLevel > 0 && currentLevel > lastLevel + 1) {
+                    hierarchyErrors.push(`Pominięto poziom nagłówka: z H${lastLevel} na H${currentLevel}`);
+                }
+
+                lastLevel = currentLevel;
             }
-        }
+        });
 
-        // 4. Images & Alt Text - WCAG 1.1.1 Non-text Content
-        // Images are <wp:inline> or <wp:anchor> usually containing <wp:docPr> with descr or title attributes
-        // <wp:docPr id="1" name="Picture 1" descr="A cat sitting on a mat"/>
-
-        // Let's rely on regex for finding <wp:docPr ... /> tags
+        // 4. Images & Alt Text check (Regex fallback as it was working well and faster for attrs)
         const imgTags = xml.match(/<wp:docPr[^>]*>/g) || [];
         hasImages = imgTags.length > 0;
-
         imgTags.forEach(tag => {
-            // Check for descr or description (older word versions might use different attrs, but descr is common in wp:docPr)
             const hasDescr = /descr="[^"]+"/.test(tag) && !/descr=""/.test(tag) && !/descr="\s*"/.test(tag);
             const hasTitle = /title="[^"]+"/.test(tag);
-            // Some newer Office version use 'name' as title if no other attr, but let's stick to standard accessibility fields
-
-            // If it lacks both, it's likely missing alt text.
             if (!hasDescr && !hasTitle) {
                 imagesMissingAlt++;
             }
@@ -181,16 +181,38 @@ export async function checkDocx(file: File): Promise<Report> {
             id: 'structure-headings',
             wcagCriterion: '1.3.1',
             description: 'Wykryto nagłówki',
-            help: 'Dobrze, że używasz stylów nagłówków.',
+            help: 'Znaleziono strukturę nagłówków.',
             impact: 'serious',
             status: 'pass',
         });
+
+        if (hierarchyErrors.length === 0) {
+            violations.push({
+                id: 'heading-order',
+                wcagCriterion: '1.3.1',
+                description: 'Zachowano poprawną hierarchię nagłówków',
+                help: 'Nagłówki następują po sobie w dobrej kolejności (np. H1 -> H2).',
+                impact: 'moderate',
+                status: 'pass',
+            });
+        } else {
+            violations.push({
+                id: 'heading-order',
+                wcagCriterion: '1.3.1',
+                description: `Błędy w hierarchii nagłówków (${hierarchyErrors.length})`,
+                help: 'Nie pomijaj poziomów nagłówków (np. nie skacz z H1 od razu do H3).',
+                impact: 'serious',
+                status: 'warning',
+                details: hierarchyErrors.slice(0, 5).join(', ') + (hierarchyErrors.length > 5 ? '...' : '')
+            });
+        }
+
     } else {
         violations.push({
             id: 'structure-headings',
             wcagCriterion: '1.3.1',
             description: 'Nie wykryto stylów nagłówków',
-            help: 'Używaj stylów (Nagłówek 1, 2 itp.) w Wordzie, aby nadać strukturę, a nie tylko pogrubienie.',
+            help: 'Używaj stylów (Nagłówek 1, 2 itp.) w Wordzie.',
             impact: 'serious',
             status: 'fail',
         });
@@ -202,7 +224,7 @@ export async function checkDocx(file: File): Promise<Report> {
                 id: 'images-alt',
                 wcagCriterion: '1.1.1',
                 description: 'Wszystkie obrazy mają tekst alternatywny',
-                help: 'Upewnij się, że tekst jest sensowny.',
+                help: 'Świetnie.',
                 impact: 'critical',
                 status: 'pass',
             });
@@ -211,7 +233,7 @@ export async function checkDocx(file: File): Promise<Report> {
                 id: 'images-alt',
                 wcagCriterion: '1.1.1',
                 description: `Znaleziono ${imagesMissingAlt} obrazów bez tekstu alternatywnego`,
-                help: 'Kliknij prawym przyciskiem obraz w Word > Edytuj tekst alternatywny.',
+                help: 'Edytuj tekst alternatywny w Wordzie.',
                 impact: 'critical',
                 status: 'fail',
             });
@@ -221,13 +243,12 @@ export async function checkDocx(file: File): Promise<Report> {
             id: 'images-alt',
             wcagCriterion: '1.1.1',
             description: 'Nie znaleziono obrazów',
-            help: 'Jeśli dodasz obrazy, pamiętaj o tekście alternatywnym.',
+            help: 'Brak obrazów do sprawdzenia.',
             impact: 'minor',
-            status: 'pass', // Passing because if no images, no violation
+            status: 'pass',
         });
     }
 
-    // Calculate score
     const failCount = violations.filter(v => v.status === 'fail').length;
     const passCount = violations.filter(v => v.status === 'pass').length;
     const total = violations.length;
